@@ -9,6 +9,12 @@ import warnings
 import pandas as pd
 from .aggregate import TrackStore, MethodStore, EvalStore, json2df
 from . import metrics
+from multiprocessing import Pool
+
+
+def _process_track(args):
+    track, estimates_dir, output_dir, ext = args
+    _load_track_estimates(track, estimates_dir, output_dir, ext)
 
 
 def _load_track_estimates(track, estimates_dir, output_dir, ext="wav"):
@@ -107,7 +113,7 @@ def eval_dir(
     return data
 
 
-def eval_mus_dir(dataset, estimates_dir, output_dir=None, ext="wav"):
+def eval_mus_dir(dataset, estimates_dir, output_dir=None, ext="wav", n_processes=4):
     """Run evaluation of musdb estimate dir
 
     Parameters
@@ -120,18 +126,21 @@ def eval_mus_dir(dataset, estimates_dir, output_dir=None, ext="wav"):
         Output folder where evaluation json files are stored.
     ext : str
         estimate file extension, defaults to `wav`
+    n_processes: int
+        number of processes to use, 4 is recommended as the bottleneck is the machine's memory. Consider to increase
+        it if more memory is available
     """
     # create a new musdb instance for estimates with the same file structure
     est = musdb.DB(root=estimates_dir, is_wav=True)
     # get a list of track names
     tracks_to_be_estimated = [t.name for t in est.tracks]
-
-    for track in dataset:
-        if track.name not in tracks_to_be_estimated:
-            continue
-        _load_track_estimates(
-            track=track, estimates_dir=estimates_dir, output_dir=output_dir, ext=ext,
-        )
+    valid_tracks = [track for track in dataset if track.name in tracks_to_be_estimated]
+    n_valid_tracks = len(valid_tracks)
+    # the number of processes should not exceed the number of available cores
+    n_processes = min(n_processes, os.cpu_count())
+    # parallelize processing of tracks
+    with Pool(processes=n_processes) as pool:
+        pool.map(_process_track, zip(valid_tracks, [estimates_dir] * n_valid_tracks, [output_dir] * n_valid_tracks, [ext] * n_valid_tracks))
 
 
 def eval_mus_track(track, user_estimates, output_dir=None, mode="v4", win=1.0, hop=1.0):
